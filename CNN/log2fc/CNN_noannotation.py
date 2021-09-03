@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import pandas as pd
-from sklearn.metrics import f1_score, roc_auc_score
+from scipy.stats import spearmanr
 
 parser = argparse.ArgumentParser(description='gRNA prediction model')
 parser.add_argument('--savedir', default='./', help='path to save results')
@@ -35,7 +35,7 @@ ckptdir = args.ckptdir
 
 
 batch_size = 256
-epochs = 200
+epochs = 70
 lr = 0.0001
 ngpu=1
 
@@ -67,36 +67,34 @@ def preprocess_seq(data):
     return DATA_X
 
 
-dat = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-train-clean.csv', index_col = False)
+dat = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-train-clean.csv', index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
-label = dat['significant'].to_numpy(dtype = np.float32)
-class_count = dat['significant'].value_counts()
-w = class_count[0] / class_count[1]
-annotation = dat.iloc[:,13:46].to_numpy(dtype = np.float32) # for promoters
-#annotation = dat.iloc[:,13:48].to_numpy(dtype = np.float32) # for enhancers
+log2FC = dat['log2FoldChange'].to_numpy(dtype = np.float32)
+#log2FC = np.abs(log2FC)
+#annotation = dat.iloc[:,13:44].to_numpy(dtype = np.float32) # for promoters
+#annotation = dat.iloc[:,13:46].to_numpy(dtype = np.float32) # for enhancers
 
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
 #Xloader = torch.utils.data.DataLoader(X, batch_size=batch_size, shuffle=True)
-X2 = torch.tensor(annotation, dtype=torch.float32)
-Y = torch.tensor(label, dtype=torch.float32)
+Y = torch.tensor(log2FC, dtype=torch.float32)
 Y = Y.view(-1, 1)
 #Yloader = torch.utils.data.DataLoader(Y, batch_size=batch_size, shuffle=True)
-input_dat = TensorDataset(X1,X2,Y)
+input_dat = TensorDataset(X1,Y)
 datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-test-clean.csv', index_col = False)
+test = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-test-clean.csv', index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
-test_label = test['significant'].to_numpy(dtype = np.float32)
-test_annotation = test.iloc[:,13:46].to_numpy(dtype = np.float32) #promoters
-#test_annotation = test.iloc[:,13:48].to_numpy(dtype = np.float32) #enhancers
-subsample = np.random.choice(len(test_sequence), size = 3000, replace = False)
+test_log2FC = test['log2FoldChange'].to_numpy(dtype = np.float32)
+#test_log2FC = np.abs(test_log2FC)
+#test_annotation = test.iloc[:,13:44].to_numpy(dtype = np.float32) #promoters
+#test_annotation = test.iloc[:,13:46].to_numpy(dtype = np.float32) #enhancers
+#subsample = np.random.choice(len(test_sequence), size = 3000, replace = False)
 #test_X_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
-test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
-test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
+test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 
 
 class DeepSeqCNN(nn.Module):
@@ -126,8 +124,8 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(133, 100), #promoter
-            #nn.Linear(135, 100),  #enhancer
+            #nn.Linear(131, 100), #promoter
+            nn.Linear(100, 100),  #enhancer
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(100, 80),
@@ -136,19 +134,17 @@ class DeepSeqCNN(nn.Module):
             nn.Linear(80, 60),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(60, 1),
-            nn.Sigmoid()
+            nn.Linear(60, 1)
         )
         
-    def forward(self, x, y):
+    def forward(self, x):
         x1 = self.conv1(x)
         x2 = self.conv2(x)
         x3 = self.conv3(x)
         x_concat = torch.cat((x1, x2, x3), dim=1) # size: [:,210,10]
         x_concat = x_concat.view(-1, 210*10)
         x_concat = self.fc1(x_concat)
-        xy_concat = torch.cat((x_concat, y), dim = 1)
-        xy_concat = self.fc2(xy_concat)
+        xy_concat = self.fc2(x_concat)
         #for layer in self.fc:
         #    x_concat = layer(x_concat)
         #    print(x_concat.size())
@@ -159,26 +155,27 @@ class DeepSeqCNN(nn.Module):
 CNN = DeepSeqCNN().to(device)
 optimizer = optim.Adam(CNN.parameters(), lr=lr)
 #lossfunc = nn.L1Loss().to(device)
-lossfunc = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w])).to(device)
+lossfunc = nn.MSELoss().to(device)
 
 for epoch in range(epochs):
     # Training
     if epoch % 5 == 0:
         CNN.eval()
-        test_predict = CNN(test_X1_sub, test_X2_sub)
+        test_predict = CNN(test_X1_sub)
         test_predict_np = test_predict.detach().to('cpu').numpy()
-        auc = roc_auc_score(test_label[subsample], test_predict_np)
-        print('[%d] AUC: %.3f' %
-                  (epoch + 1, auc))
+        #r2 = spearmanr(test_log2FC[subsample], test_predict_np)
+        r2 = spearmanr(test_log2FC, test_predict_np)
+        print('[%d] spearman correlation: %.3f' %
+                  (epoch + 1, r2[0]))
         CNN.train()
     
     running_loss = 0.0
     for i, batch in enumerate(datloader, 0):
         # Transfer to GPU
-        local_x1, local_x2, local_y = batch
-        local_x1, local_x2, local_y = local_x1.to(device), local_x2.to(device), local_y.to(device)
+        local_x1, local_y = batch
+        local_x1, local_y = local_x1.to(device), local_y.to(device)
         optimizer.zero_grad()
-        FC_pred = CNN(local_x1, local_x2)
+        FC_pred = CNN(local_x1)
         loss = lossfunc(FC_pred, local_y)
         loss.backward()
         optimizer.step()
@@ -190,12 +187,11 @@ for epoch in range(epochs):
             running_loss = 0.0
 
 
-del test_X1_sub, test_X2_sub
+del test_X1_sub
 test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
-test_X2 = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 CNN.eval()
-test_predict = CNN(test_X1, test_X2)
+test_predict = CNN(test_X1)
 test_predict_np = test_predict.detach().to('cpu').numpy()
-roc_auc_score(test_label, test_predict_np)
-PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD.to_csv("./result_deltaGB/gRNA_binary-pro-BCE.csv")
+spearmanr(test_log2FC, test_predict_np)
+PD = pd.DataFrame(np.stack((test_log2FC, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
+PD.to_csv("./result_deltaGB/gRNA_predict-enh-padj0.2-MSE-noannot.csv")
