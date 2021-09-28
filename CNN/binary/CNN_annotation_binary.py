@@ -199,3 +199,43 @@ test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
 PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
 PD.to_csv("./result_deltaGB/gRNA_binary-pro-BCE.csv")
+
+
+## evaluate on the other test set: promoter on enhancer
+test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-test-clean.csv', index_col = False)
+test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-train-clean.csv', index_col = False)
+test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
+test_oth_sequence = test_oth['protospacer']
+test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
+test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
+#test_log2FC = np.abs(test_log2FC)
+test_oth_annotation = test_oth.iloc[:,np.r_[13:42,46,47,42,43]].to_numpy(dtype = np.float32) #for promoters, make the enhancer test file the same format
+test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
+test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
+CNN.eval()
+test_oth_predict = CNN(test_oth_X1, test_oth_X2)
+test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
+roc_auc_score(test_oth_label, test_oth_predict_np)
+PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
+PD_oth.to_csv("./result_deltaGB/gRNA_binary-pro-on-enh-BCE.csv")
+
+
+## evaluate on the other test set: enhancer on promoter
+test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-test-clean.csv', index_col = False)
+test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-train-clean.csv', index_col = False)
+test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
+test_oth['promnumber']=np.mean(test['promnumber'])
+test_oth['promlog10fdr']=np.mean(test['promlog10fdr'])
+test_oth_sequence = test_oth['protospacer']
+test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
+test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
+#test_log2FC = np.abs(test_log2FC)
+test_oth_annotation = test_oth.iloc[:,np.r_[13:42,44,45,47,48,42,43]].to_numpy(dtype = np.float32) #for enhancers, make the promoter test file the same format
+test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
+test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
+CNN.eval()
+test_oth_predict = CNN(test_oth_X1, test_oth_X2)
+test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
+roc_auc_score(test_oth_label, test_oth_predict_np)
+PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
+PD_oth.to_csv("./result_deltaGB/gRNA_binary-enh-on-pro-BCE.csv")

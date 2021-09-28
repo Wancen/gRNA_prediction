@@ -35,7 +35,7 @@ ckptdir = args.ckptdir
 
 
 batch_size = 256
-epochs = 150
+epochs = 130
 lr = 0.0001
 ngpu=1
 
@@ -67,13 +67,13 @@ def preprocess_seq(data):
     return DATA_X
 
 
-dat = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-padj0.2-train-clean.csv', index_col = False)
+dat = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-train-clean.csv', index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 log2FC = dat['log2FoldChange'].to_numpy(dtype = np.float32)
 #log2FC = np.abs(log2FC)
-annotation = dat.iloc[:,13:46].to_numpy(dtype = np.float32) # for promoters
-#annotation = dat.iloc[:,13:48].to_numpy(dtype = np.float32) # for enhancers
+#annotation = dat.iloc[:,13:46].to_numpy(dtype = np.float32) # for promoters
+annotation = dat.iloc[:,13:48].to_numpy(dtype = np.float32) # for enhancers
 
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
 #Xloader = torch.utils.data.DataLoader(X, batch_size=batch_size, shuffle=True)
@@ -86,13 +86,13 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-padj0.2-test-clean.csv', index_col = False)
+test = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-test-clean.csv', index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_log2FC = test['log2FoldChange'].to_numpy(dtype = np.float32)
 #test_log2FC = np.abs(test_log2FC)
-test_annotation = test.iloc[:,13:46].to_numpy(dtype = np.float32) #promoters
-#test_annotation = test.iloc[:,13:48].to_numpy(dtype = np.float32) #enhancers
+#test_annotation = test.iloc[:,13:46].to_numpy(dtype = np.float32) #promoters
+test_annotation = test.iloc[:,13:48].to_numpy(dtype = np.float32) #enhancers
 #subsample = np.random.choice(len(test_sequence), size = 3000, replace = False)
 #test_X_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
 test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
@@ -126,8 +126,8 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(133, 100), #promoter
-            #nn.Linear(135, 100),  #enhancer
+            #nn.Linear(133, 100), #promoter
+            nn.Linear(135, 100),  #enhancer
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(100, 80),
@@ -199,3 +199,43 @@ test_predict_np = test_predict.detach().to('cpu').numpy()
 spearmanr(test_log2FC, test_predict_np)
 PD = pd.DataFrame(np.stack((test_log2FC, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
 PD.to_csv("./result_deltaGB/gRNA_predict-pro-padj0.2-MSE.csv")
+
+
+## evaluate on the other test set: promoter on enhancer
+test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-test-clean.csv', index_col = False)
+test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-padj0.2-train-clean.csv', index_col = False)
+test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
+test_oth_sequence = test_oth['protospacer']
+test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
+test_oth_log2FC = test_oth['log2FoldChange'].to_numpy(dtype = np.float32)
+#test_log2FC = np.abs(test_log2FC)
+test_oth_annotation = test_oth.iloc[:,np.r_[13:42,46,47,42,43]].to_numpy(dtype = np.float32) #for promoters, make the enhancer test file the same format
+test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
+test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
+CNN.eval()
+test_oth_predict = CNN(test_oth_X1, test_oth_X2)
+test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
+spearmanr(test_oth_log2FC, test_oth_predict_np)
+PD_oth = pd.DataFrame(np.stack((test_oth_log2FC, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
+PD_oth.to_csv("./result_deltaGB/gRNA_predict-pro-on-enh-padj0.2-MSE.csv")
+
+
+## evaluate on the other test set: enhancer on promoter
+test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-padj0.2-test-clean.csv', index_col = False)
+test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-padj0.2-train-clean.csv', index_col = False)
+test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
+test_oth['promnumber']=np.mean(test['promnumber'])
+test_oth['promlog10fdr']=np.mean(test['promlog10fdr'])
+test_oth_sequence = test_oth['protospacer']
+test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
+test_oth_log2FC = test_oth['log2FoldChange'].to_numpy(dtype = np.float32)
+#test_log2FC = np.abs(test_log2FC)
+test_oth_annotation = test_oth.iloc[:,np.r_[13:42,44,45,47,48,42,43]].to_numpy(dtype = np.float32) #for enhancers, make the promoter test file the same format
+test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
+test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
+CNN.eval()
+test_oth_predict = CNN(test_oth_X1, test_oth_X2)
+test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
+spearmanr(test_oth_log2FC, test_oth_predict_np)
+PD_oth = pd.DataFrame(np.stack((test_oth_log2FC, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
+PD_oth.to_csv("./result_deltaGB/gRNA_predict-enh-on-pro-padj0.2-MSE.csv")
