@@ -1,6 +1,6 @@
 import torch
 import argparse
-import os
+import os, sys
 import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
@@ -12,20 +12,22 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import pandas as pd
 from sklearn.metrics import f1_score, roc_auc_score
+import shap
 
-parser = argparse.ArgumentParser(description='gRNA prediction model')
-parser.add_argument('--savedir', default='./', help='path to save results')
-parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
-parser.add_argument('--batch-size', type=int, default=128,
-                    help='input batch size for training (default: 128)')
-parser.add_argument('--epochs', type=int, default=100,
-                    help='number of epochs to train (default: 100)')
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='learning rate (default: 0.001)')
-args = parser.parse_args()
 
-savedir = args.savedir
-ckptdir = args.ckptdir
+#parser = argparse.ArgumentParser(description='gRNA prediction model')
+#parser.add_argument('--savedir', default='./', help='path to save results')
+#parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
+#parser.add_argument('--batch-size', type=int, default=128,
+#                    help='input batch size for training (default: 128)')
+#parser.add_argument('--epochs', type=int, default=100,
+#                    help='number of epochs to train (default: 100)')
+#parser.add_argument('--lr', type=float, default=0.001,
+#                    help='learning rate (default: 0.001)')
+#args = parser.parse_args()
+#
+#savedir = args.savedir
+#ckptdir = args.ckptdir
 
 
 #batch_size = args.batch_size
@@ -33,15 +35,60 @@ ckptdir = args.ckptdir
 #lr = args.lr
 #ngpu=1
 
-
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_Dec_resplit/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_resplit/'
 batch_size = 256
-epochs = 200
+epochs = 150 ## 200 for promoter, 150 for enhancer
 lr = 0.0001
 ngpu=1
+grp = 'enh'
+take_log = False
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
 
+
+#def preprocess_seq(data, strand):
+#    print("Start preprocessing the sequence")
+#    length = len(data[0])
+#    DATA_X = np.zeros((len(data),4,length), dtype=int)
+#    print(DATA_X.shape)
+#    for l in range(len(data)):
+#        if strand[l] == 1:
+#            for i in range(length):
+#                try: data[l][i]
+#                except: print(data[l], i, length, len(data))
+#                if data[l][i]in "Aa":
+#                    DATA_X[l, 0, i] = 1
+#                elif data[l][i] in "Cc":
+#                    DATA_X[l, 1, i] = 1
+#                elif data[l][i] in "Gg":
+#                    DATA_X[l, 2, i] = 1
+#                elif data[l][i] in "Tt":
+#                    DATA_X[l, 3, i] = 1
+#                else:
+#                    print("Non-ATGC character " + data[i])
+#                    sys.exit()
+#        elif strand[l] == -1:   ## negative strand: take reverse complement
+#            for i in range(length):
+#                try: data[l][i]
+#                except: print(data[l], i, length, len(data))
+#                if data[l][i]in "Aa":
+#                    DATA_X[l, 3, length - i - 1] = 1
+#                elif data[l][i] in "Cc":
+#                    DATA_X[l, 2, length - i - 1] = 1
+#                elif data[l][i] in "Gg":
+#                    DATA_X[l, 1, length - i - 1] = 1
+#                elif data[l][i] in "Tt":
+#                    DATA_X[l, 0, length - i - 1] = 1
+#                else:
+#                    print("Non-ATGC character " + data[i])
+#                    sys.exit()
+#        else:
+#            print("Invalid strand information on row " + l + ": " + strand[l])
+#            sys.exit()
+#    print("Preprocessing the sequence done")
+#    return DATA_X
 
 def preprocess_seq(data):
     print("Start preprocessing the sequence")
@@ -67,14 +114,23 @@ def preprocess_seq(data):
     return DATA_X
 
 
-dat = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-train-clean.csv', index_col = False)
+if take_log:
+    dat = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-train-clean-log.csv', index_col = False)
+else:
+    dat = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-train-clean.csv', index_col = False)
+
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 label = dat['significant'].to_numpy(dtype = np.float32)
 class_count = dat['significant'].value_counts()
 w = class_count[0] / class_count[1]
-annotation = dat.iloc[:,13:46].to_numpy(dtype = np.float32) # for promoters
-#annotation = dat.iloc[:,13:48].to_numpy(dtype = np.float32) # for enhancers
+if grp == 'pro':
+    annotation = dat.iloc[:,12:53].to_numpy(dtype = np.float32) # for promoters
+elif grp == 'enh':
+    annotation = dat.iloc[:,12:55].to_numpy(dtype = np.float32) # for enhancers
+else:
+    print("Invalid group: " + grp)
+
 
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
 #Xloader = torch.utils.data.DataLoader(X, batch_size=batch_size, shuffle=True)
@@ -87,17 +143,30 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-test-clean.csv', index_col = False)
+if take_log:
+    test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-test-clean-log.csv', index_col = False)
+else:
+    test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-test-clean.csv', index_col = False)
+
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_label = test['significant'].to_numpy(dtype = np.float32)
-test_annotation = test.iloc[:,13:46].to_numpy(dtype = np.float32) #promoters
-#test_annotation = test.iloc[:,13:48].to_numpy(dtype = np.float32) #enhancers
+if grp == 'pro':
+    test_annotation = test.iloc[:,12:53].to_numpy(dtype = np.float32) #promoters
+elif grp == "enh":
+    test_annotation = test.iloc[:,12:55].to_numpy(dtype = np.float32) #enhancers
+else:
+    print("Invalid group:" + grp)
+
 subsample = np.random.choice(len(test_sequence), size = 3000, replace = False)
 #test_X_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
 test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
 test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
 
+if grp == 'pro':
+    dim_fc = 141
+elif grp == 'enh':
+    dim_fc = 143
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
@@ -126,8 +195,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(133, 100), #promoter
-            #nn.Linear(135, 100),  #enhancer
+            nn.Linear(dim_fc, 100),
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(100, 80),
@@ -189,6 +257,12 @@ for epoch in range(epochs):
                   (epoch + 1, i + 1, running_loss / 25))
             running_loss = 0.0
 
+if take_log:
+    ckptPATH = resultdir + '/models/gRNA_binary-log-'+grp+'-BCE-seqannot.pth'
+else:
+    ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot.pth'
+
+torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub, test_X2_sub
 test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
@@ -198,7 +272,13 @@ test_predict = CNN(test_X1, test_X2)
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
 PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD.to_csv("./result_deltaGB/gRNA_binary-pro-BCE.csv")
+if take_log:
+    PD.to_csv(resultdir + '/gRNA_binary-log-'+grp+'-BCE-seqannot.csv')
+else:
+    PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seqannot.csv')
+
+
+
 
 
 ## evaluate on the other test set: promoter on enhancer
