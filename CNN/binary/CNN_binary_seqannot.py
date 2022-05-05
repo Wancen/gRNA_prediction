@@ -35,14 +35,13 @@ import shap
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_Dec_resplit/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_resplit/'
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/'
 batch_size = 256
-epochs = 150 ## 200 for promoter, 150 for enhancer
+epochs = 200 ## 120 for promoter, 150 for enhancer
 lr = 0.0001
 ngpu=1
-grp = 'enh'
-take_log = False
+grp = 'pro'
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -114,18 +113,16 @@ def preprocess_seq(data):
     return DATA_X
 
 
-if take_log:
-    dat = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-train-clean-log.csv', index_col = False)
-else:
-    dat = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-train-clean.csv', index_col = False)
+
+dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-train-clean.csv', index_col = False)
 
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
-label = dat['significant'].to_numpy(dtype = np.float32)
-class_count = dat['significant'].value_counts()
+label = dat['significance'].to_numpy(dtype = np.float32)
+class_count = dat['significance'].value_counts()
 w = class_count[0] / class_count[1]
 if grp == 'pro':
-    annotation = dat.iloc[:,12:53].to_numpy(dtype = np.float32) # for promoters
+    annotation = dat.iloc[:,12:51].to_numpy(dtype = np.float32) # for promoters
 elif grp == 'enh':
     annotation = dat.iloc[:,12:55].to_numpy(dtype = np.float32) # for enhancers
 else:
@@ -143,16 +140,13 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-if take_log:
-    test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-test-clean-log.csv', index_col = False)
-else:
-    test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_rawp0.05-binary-test-clean.csv', index_col = False)
+test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-test-clean.csv', index_col = False)
 
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
-test_label = test['significant'].to_numpy(dtype = np.float32)
+test_label = test['significance'].to_numpy(dtype = np.float32)
 if grp == 'pro':
-    test_annotation = test.iloc[:,12:53].to_numpy(dtype = np.float32) #promoters
+    test_annotation = test.iloc[:,12:51].to_numpy(dtype = np.float32) #promoters
 elif grp == "enh":
     test_annotation = test.iloc[:,12:55].to_numpy(dtype = np.float32) #enhancers
 else:
@@ -164,7 +158,7 @@ test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float3
 test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
 
 if grp == 'pro':
-    dim_fc = 141
+    dim_fc = 139
 elif grp == 'enh':
     dim_fc = 143
 
@@ -252,15 +246,13 @@ for epoch in range(epochs):
         optimizer.step()
         
         running_loss += loss.item()
-        if i % 25 == 24:    # print every 20 mini-batches
+        if i % 200 == 199:    # print every 200 mini-batches
             print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 25))
+                  (epoch + 1, i + 1, running_loss / 200))
             running_loss = 0.0
 
-if take_log:
-    ckptPATH = resultdir + '/models/gRNA_binary-log-'+grp+'-BCE-seqannot.pth'
-else:
-    ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot.pth'
+
+ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot.pth'
 
 torch.save(CNN.state_dict(), ckptPATH)
 
@@ -272,10 +264,7 @@ test_predict = CNN(test_X1, test_X2)
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
 PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-if take_log:
-    PD.to_csv(resultdir + '/gRNA_binary-log-'+grp+'-BCE-seqannot.csv')
-else:
-    PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seqannot.csv')
+PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seqannot.csv')
 
 
 
