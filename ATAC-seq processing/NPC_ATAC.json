@@ -1,0 +1,29 @@
+{
+    "atac.title" : "NPC_ATAC_7TP_72hr",
+    "atac.description" : "Corresponding GEO accession: GSM3163880/GSM3163887; Corresponding SRA run: SRR7230429/SRR7230436",
+
+    "atac.pipeline_type" : "atac",
+    "atac.align_only" : true,
+    "atac.true_rep_only" : false,
+
+    "atac.genome_tsv" : "/pine/scr/t/i/tianyou/ATAC-seq/reference_genome_hg38/hg38.tsv",
+
+    "atac.paired_end" : true,
+
+
+
+
+
+    "atac.fastqs_rep1_R1" : [ "/pine/scr/t/i/tianyou/sra/sra/SRR7230429.sra_1.fastq" ],
+    "atac.fastqs_rep1_R2" : [ "/pine/scr/t/i/tianyou/sra/sra/SRR7230429.sra_2.fastq" ],
+
+    "atac.fastqs_rep2_R1" : [ "/pine/scr/t/i/tianyou/sra/sra/SRR7230436.sra_1.fastq" ],
+    "atac.fastqs_rep2_R2" : [ "/pine/scr/t/i/tianyou/sra/sra/SRR7230436.sra_2.fastq" ],
+
+
+
+
+    "atac.auto_detect_adapter" : true,
+
+    "atac.multimapping" : 4
+}
