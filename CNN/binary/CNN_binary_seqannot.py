@@ -36,9 +36,9 @@ import shap
 #ngpu=1
 
 datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/binary/'
 batch_size = 256
-epochs = 200 ## 120 for promoter, 150 for enhancer
+epochs = 150 ## 150 for promoter, 40 for enhancer
 lr = 0.0001
 ngpu=1
 grp = 'pro'
@@ -47,54 +47,14 @@ device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else 
 print(device)
 
 
-#def preprocess_seq(data, strand):
-#    print("Start preprocessing the sequence")
-#    length = len(data[0])
-#    DATA_X = np.zeros((len(data),4,length), dtype=int)
-#    print(DATA_X.shape)
-#    for l in range(len(data)):
-#        if strand[l] == 1:
-#            for i in range(length):
-#                try: data[l][i]
-#                except: print(data[l], i, length, len(data))
-#                if data[l][i]in "Aa":
-#                    DATA_X[l, 0, i] = 1
-#                elif data[l][i] in "Cc":
-#                    DATA_X[l, 1, i] = 1
-#                elif data[l][i] in "Gg":
-#                    DATA_X[l, 2, i] = 1
-#                elif data[l][i] in "Tt":
-#                    DATA_X[l, 3, i] = 1
-#                else:
-#                    print("Non-ATGC character " + data[i])
-#                    sys.exit()
-#        elif strand[l] == -1:   ## negative strand: take reverse complement
-#            for i in range(length):
-#                try: data[l][i]
-#                except: print(data[l], i, length, len(data))
-#                if data[l][i]in "Aa":
-#                    DATA_X[l, 3, length - i - 1] = 1
-#                elif data[l][i] in "Cc":
-#                    DATA_X[l, 2, length - i - 1] = 1
-#                elif data[l][i] in "Gg":
-#                    DATA_X[l, 1, length - i - 1] = 1
-#                elif data[l][i] in "Tt":
-#                    DATA_X[l, 0, length - i - 1] = 1
-#                else:
-#                    print("Non-ATGC character " + data[i])
-#                    sys.exit()
-#        else:
-#            print("Invalid strand information on row " + l + ": " + strand[l])
-#            sys.exit()
-#    print("Preprocessing the sequence done")
-#    return DATA_X
-
 def preprocess_seq(data):
     print("Start preprocessing the sequence")
     length = len(data[0])
     DATA_X = np.zeros((len(data),4,length), dtype=int)
     print(DATA_X.shape)
     for l in range(len(data)):
+        if l % 10000 == 0:
+            print(str(l) + " sequences processed")
         for i in range(length):
             try: data[l][i]
             except: print(data[l], i, length, len(data))
@@ -115,16 +75,15 @@ def preprocess_seq(data):
 
 
 dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-train-clean.csv', index_col = False)
-
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 label = dat['significance'].to_numpy(dtype = np.float32)
 class_count = dat['significance'].value_counts()
 w = class_count[0] / class_count[1]
 if grp == 'pro':
-    annotation = dat.iloc[:,12:51].to_numpy(dtype = np.float32) # for promoters
+    annotation = dat.iloc[:,12:54].to_numpy(dtype = np.float32) # for promoters
 elif grp == 'enh':
-    annotation = dat.iloc[:,12:55].to_numpy(dtype = np.float32) # for enhancers
+    annotation = dat.iloc[:,12:56].to_numpy(dtype = np.float32) # for enhancers
 else:
     print("Invalid group: " + grp)
 
@@ -141,31 +100,36 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 ## test set
 test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-test-clean.csv', index_col = False)
-
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_label = test['significance'].to_numpy(dtype = np.float32)
 if grp == 'pro':
-    test_annotation = test.iloc[:,12:51].to_numpy(dtype = np.float32) #promoters
+    test_annotation = test.iloc[:,12:54].to_numpy(dtype = np.float32) #promoters
 elif grp == "enh":
-    test_annotation = test.iloc[:,12:55].to_numpy(dtype = np.float32) #enhancers
+    test_annotation = test.iloc[:,12:56].to_numpy(dtype = np.float32) #enhancers
 else:
     print("Invalid group:" + grp)
 
-subsample = np.random.choice(len(test_sequence), size = 3000, replace = False)
+subsample = np.random.choice(len(test_sequence), size = 4000, replace = False)
 #test_X_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
 test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float32).to(device)
 test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
 
 if grp == 'pro':
-    dim_fc = 139
+    dim_fc = 142
 elif grp == 'enh':
-    dim_fc = 143
+    dim_fc = 144
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
         super(DeepSeqCNN, self).__init__()
         #self.input_size = input_size
+        self.conv0 = nn.Sequential(
+            nn.Conv1d(4, 50, 1),
+            nn.MaxPool1d(2),
+            nn.ReLU(),
+            nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
+        )
         self.conv1 = nn.Sequential(
             nn.Conv1d(4, 100, 3, padding=1),
             nn.MaxPool1d(2),
@@ -185,7 +149,7 @@ class DeepSeqCNN(nn.Module):
             nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(210*10, 100),
+            nn.Linear(260*10, 100),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
@@ -203,11 +167,12 @@ class DeepSeqCNN(nn.Module):
         )
         
     def forward(self, x, y):
+        x0 = self.conv0(x)
         x1 = self.conv1(x)
         x2 = self.conv2(x)
         x3 = self.conv3(x)
-        x_concat = torch.cat((x1, x2, x3), dim=1) # size: [:,210,10]
-        x_concat = x_concat.view(-1, 210*10)
+        x_concat = torch.cat((x0, x1, x2, x3), dim=1) # size: [:,260,10]
+        x_concat = x_concat.view(-1, 260*10)
         x_concat = self.fc1(x_concat)
         xy_concat = torch.cat((x_concat, y), dim = 1)
         xy_concat = self.fc2(xy_concat)
@@ -223,37 +188,38 @@ optimizer = optim.Adam(CNN.parameters(), lr=lr)
 #lossfunc = nn.L1Loss().to(device)
 lossfunc = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w])).to(device)
 
-for epoch in range(epochs):
-    # Training
-    if epoch % 5 == 0:
-        CNN.eval()
-        test_predict = CNN(test_X1_sub, test_X2_sub)
-        test_predict_np = test_predict.detach().to('cpu').numpy()
-        auc = roc_auc_score(test_label[subsample], test_predict_np)
-        print('[%d] AUC: %.3f' %
-                  (epoch + 1, auc))
-        CNN.train()
+def train_model(model, num_epochs):
+    for epoch in range(num_epochs):
+        # Training
+        if epoch % 5 == 0:
+            model.eval()
+            test_predict = model(test_X1_sub, test_X2_sub)
+            test_predict_np = test_predict.detach().to('cpu').numpy()
+            auc = roc_auc_score(test_label[subsample], test_predict_np)
+            print('Epoch [%d] AUC: %.3f' %
+                    (epoch + 1, auc))
+            model.train()
+        running_loss = 0.0
+        for i, batch in enumerate(datloader, 0):
+            # Transfer to GPU
+            local_x1, local_x2, local_y = batch
+            local_x1, local_x2, local_y = local_x1.to(device), local_x2.to(device), local_y.to(device)
+            optimizer.zero_grad()
+            FC_pred = model(local_x1, local_x2)
+            loss = lossfunc(FC_pred, local_y)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+            if i % 200 == 199:    # print every 200 mini-batches
+                print('[%d, %5d] loss: %.3f' %
+                    (epoch + 1, i + 1, running_loss / 200))
+                running_loss = 0.0
     
-    running_loss = 0.0
-    for i, batch in enumerate(datloader, 0):
-        # Transfer to GPU
-        local_x1, local_x2, local_y = batch
-        local_x1, local_x2, local_y = local_x1.to(device), local_x2.to(device), local_y.to(device)
-        optimizer.zero_grad()
-        FC_pred = CNN(local_x1, local_x2)
-        loss = lossfunc(FC_pred, local_y)
-        loss.backward()
-        optimizer.step()
-        
-        running_loss += loss.item()
-        if i % 200 == 199:    # print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 200))
-            running_loss = 0.0
+    return model
 
+CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot.pth'
-
+ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot-Sep19.pth'
 torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub, test_X2_sub
