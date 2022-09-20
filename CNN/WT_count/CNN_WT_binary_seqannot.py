@@ -38,7 +38,7 @@ import shap
 datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
 resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/WT_count/'
 batch_size = 256
-epochs = 2000 ## 120 for promoter, 150 for enhancer
+epochs = 2000
 lr = 0.0001
 ngpu=1
 
