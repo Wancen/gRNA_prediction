@@ -41,6 +41,7 @@ batch_size = 256
 epochs = 1000
 lr = 0.0001
 ngpu=1
+include_strand = True
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -78,7 +79,10 @@ sequence_onehot = preprocess_seq(sequence)
 label = dat['abundance'].to_numpy(dtype = np.float32)
 class_count = dat['abundance'].value_counts()
 w = class_count[0] / class_count[1]
-annotation = dat.iloc[:,12:54].to_numpy(dtype = np.float32) # for promoters
+if include_strand:
+    annotation = dat.iloc[:,12:54].to_numpy(dtype = np.float32)
+else:
+    annotation = dat.iloc[:,13:54].to_numpy(dtype = np.float32)
 
 
 
@@ -98,13 +102,18 @@ test = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-binary-test-clean
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_label = test['abundance'].to_numpy(dtype = np.float32)
-test_annotation = test.iloc[:,12:54].to_numpy(dtype = np.float32) #promoters
+if include_strand:
+    test_annotation = test.iloc[:,12:54].to_numpy(dtype = np.float32)
+else:
+    test_annotation = test.iloc[:,13:54].to_numpy(dtype = np.float32)
 
 test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 test_X2_sub = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 
-
-dim_fc = 162
+if include_strand:
+    dim_fc = 162
+else:
+    dim_fc = 161
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
