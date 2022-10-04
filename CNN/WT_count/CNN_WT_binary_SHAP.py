@@ -38,11 +38,10 @@ import shap
 datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
 resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/WT_count/'
 batch_size = 256
-epochs = 2000
+epochs = 1000
 lr = 0.0001
 ngpu=1
-n_shap_sel = 1000
-n_shap_ref = 500
+n_shap_ref = 1000
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -106,15 +105,19 @@ test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 test_X2_sub = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 
 
-dim_fc = 142
+dim_fc = 162
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
         super(DeepSeqCNN, self).__init__()
-        #self.input_size = input_size
+        # self.conv0 = nn.Sequential(
+        #     nn.Conv1d(4, 50, 1),
+        #     nn.MaxPool1d(2),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
+        # )
         self.conv0 = nn.Sequential(
-            nn.Conv1d(4, 50, 1),
-            nn.MaxPool1d(2),
+            nn.Conv1d(4, 50, 2, stride=2),
             nn.ReLU(),
             nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
         )
@@ -136,6 +139,10 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
         )
+        self.conv4 = nn.Sequential(
+            nn.Conv1d(4, 1, 1),
+            nn.ReLU(),
+        )
         self.fc1 = nn.Sequential(
             nn.Linear(260*10, 100),
             nn.ReLU(),
@@ -151,7 +158,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(60, 1),
-            nn.Sigmoid()
+            #nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
     def forward(self, x, y):
@@ -159,10 +166,11 @@ class DeepSeqCNN(nn.Module):
         x1 = self.conv1(x)
         x2 = self.conv2(x)
         x3 = self.conv3(x)
-        x_concat = torch.cat((x0, x1, x2, x3), dim=1) # size: [:,250,10]
+        x4 = self.conv4(x).view(-1, 20)
+        x_concat = torch.cat((x0, x1, x2, x3), dim=1) # size: [:,260,10]
         x_concat = x_concat.view(-1, 260*10)
         x_concat = self.fc1(x_concat)
-        xy_concat = torch.cat((x_concat, y), dim = 1)
+        xy_concat = torch.cat((x_concat, x4, y), dim = 1)
         xy_concat = self.fc2(xy_concat)
         #for layer in self.fc:
         #    x_concat = layer(x_concat)
@@ -170,14 +178,13 @@ class DeepSeqCNN(nn.Module):
         #x_concat = self.fc(x_concat)
         return xy_concat
 
-
 CNN = DeepSeqCNN().to(device)
 optimizer = optim.Adam(CNN.parameters(), lr=lr)
 #lossfunc = nn.L1Loss().to(device)
 lossfunc = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w])).to(device)
 
 ## load in the trained model
-ckptPATH = resultdir + '/models/Maria_WT_binary-BCE-seqannot-Sep13.pth'
+ckptPATH = resultdir + '/models/Maria_WT_binary-BCE-seqannot-Oct04.pth'
 CNN.load_state_dict(torch.load(ckptPATH, map_location = device))
 
 rdm = np.random.choice(len(sequence), size = n_shap_ref, replace = False)
@@ -202,8 +209,9 @@ shap_annot_val = np.vstack([test_shap_annot_val, train_shap_annot_val])
 shap_seq_val = np.vstack([test_shap_seq_val, train_shap_seq_val])
 annotation_merged = np.vstack([test_annotation, annotation])
 
-shap.summary_plot(shap_annot_val, feature_names = dat.columns[12:54], features = annotation_merged, show = False)
-plt.savefig(resultdir + '/shap/WT_binary_seqannot-Sep13.png', bbox_inches='tight')
+np.save(resultdir + '/shap/WT_binary_seqannot_annotshap-Oct04.npy', shap_annot_val)
+np.save(resultdir + '/shap/WT_binary_seqannot_seqshap-Oct04.npy', shap_seq_val)
 
-np.save(resultdir + '/shap/WT_binary_seqannot_annotshap-Sep13.npy', shap_annot_val)
-np.save(resultdir + '/shap/WT_binary_seqannot_seqshap-Sep13.npy', shap_seq_val)
+shap.summary_plot(shap_annot_val, feature_names = dat.columns[12:54], features = annotation_merged, show = False)
+plt.savefig(resultdir + '/shap/WT_binary_seqannot-Oct04.png', bbox_inches='tight')
+
