@@ -38,10 +38,10 @@ import shap
 datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
 resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/binary/'
 batch_size = 256
-epochs = 150 ## 150 for promoter, 40 for enhancer
+epochs = 15 ## 60 for promoter, 15 for enhancer
 lr = 0.0001
 ngpu=1
-grp = 'pro'
+grp = 'enh'
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -116,17 +116,21 @@ test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float3
 test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
 
 if grp == 'pro':
-    dim_fc = 142
+    dim_fc = 162
 elif grp == 'enh':
-    dim_fc = 144
+    dim_fc = 164
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
         super(DeepSeqCNN, self).__init__()
-        #self.input_size = input_size
+        # self.conv0 = nn.Sequential(
+        #     nn.Conv1d(4, 50, 1),
+        #     nn.MaxPool1d(2),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
+        # )
         self.conv0 = nn.Sequential(
-            nn.Conv1d(4, 50, 1),
-            nn.MaxPool1d(2),
+            nn.Conv1d(4, 50, 2, stride=2),
             nn.ReLU(),
             nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
         )
@@ -148,6 +152,10 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
         )
+        self.conv4 = nn.Sequential(
+            nn.Conv1d(4, 1, 1),
+            nn.ReLU(),
+        )
         self.fc1 = nn.Sequential(
             nn.Linear(260*10, 100),
             nn.ReLU(),
@@ -163,7 +171,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(60, 1),
-            nn.Sigmoid()
+            # nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
     def forward(self, x, y):
@@ -171,10 +179,11 @@ class DeepSeqCNN(nn.Module):
         x1 = self.conv1(x)
         x2 = self.conv2(x)
         x3 = self.conv3(x)
+        x4 = self.conv4(x).view(-1, 20)
         x_concat = torch.cat((x0, x1, x2, x3), dim=1) # size: [:,260,10]
         x_concat = x_concat.view(-1, 260*10)
         x_concat = self.fc1(x_concat)
-        xy_concat = torch.cat((x_concat, y), dim = 1)
+        xy_concat = torch.cat((x_concat, x4, y), dim = 1)
         xy_concat = self.fc2(xy_concat)
         #for layer in self.fc:
         #    x_concat = layer(x_concat)
@@ -187,13 +196,14 @@ CNN = DeepSeqCNN().to(device)
 optimizer = optim.Adam(CNN.parameters(), lr=lr)
 #lossfunc = nn.L1Loss().to(device)
 lossfunc = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w])).to(device)
+sigmoid = nn.Sigmoid()
 
 def train_model(model, num_epochs):
     for epoch in range(num_epochs):
         # Training
-        if epoch % 5 == 0:
+        if epoch % 2 == 0:
             model.eval()
-            test_predict = model(test_X1_sub, test_X2_sub)
+            test_predict = sigmoid(model(test_X1_sub, test_X2_sub))
             test_predict_np = test_predict.detach().to('cpu').numpy()
             auc = roc_auc_score(test_label[subsample], test_predict_np)
             print('Epoch [%d] AUC: %.3f' %
@@ -219,14 +229,14 @@ def train_model(model, num_epochs):
 
 CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot-Sep19.pth'
+ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot-Oct04.pth'
 torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub, test_X2_sub
 test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 test_X2 = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 CNN.eval()
-test_predict = CNN(test_X1, test_X2)
+test_predict = sigmoid(CNN(test_X1, test_X2))
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
 PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
