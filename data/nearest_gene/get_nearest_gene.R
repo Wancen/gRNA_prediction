@@ -24,6 +24,7 @@ OGEE = fread(file.path(dir, "OGEE_essentiality.txt"))[,-1]
 OGEE_merged = data.tbl %>% 
   left_join(OGEE, by = c("gene" = "locus")) %>% 
   mutate(distToTSS = pmin(abs(start - gstart), abs(end - gstart))) %>%
+  replace_na(list(OGEE_prop_Essential = 0)) %>%
   select(chr, start, end, grna, dhs, gene, distance, OGEE_prop_Essential, geneId, distToTSS) %>% 
   unique() %>%
   group_by(chr, start, end, grna) %>%
@@ -42,6 +43,7 @@ OGEE = fread(file.path(dir, "OGEE_essentiality.txt"))[,-1]
 OGEE_merged = data.tbl %>% 
   left_join(OGEE, by = c("gene" = "locus")) %>% 
   mutate(distToTSS = pmin(abs(start - gstart), abs(end - gstart))) %>%
+  replace_na(list(OGEE_prop_Essential = 0)) %>%
   select(chr, start, end, grna, dhs, gene, distance, OGEE_prop_Essential, geneId, distToTSS) %>% 
   unique() %>%
   group_by(chr, start, end, grna) %>%
