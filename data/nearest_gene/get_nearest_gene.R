@@ -16,9 +16,9 @@ library(data.table)
 
 
 dir = "/proj/yunligrp/users/tianyou/gRNA/OGEE"
-data.tbl <- read_table(file.path(dir, "NPC_hg38_annotated.tsv"), 
-                       col_names = c("chr","start","end","grna","dhs","strand",
-                                     "gchr","gstart","gend","gene","score","gstrand","distance"))
+data.tbl <- fread(file.path(dir, "NPC_hg38_annotated.tsv"), 
+                  col.names = c("chr","start","end","grna","dhs","strand",
+                                "gchr","gstart","gend","gene","score","gstrand","distance"))
 
 OGEE = fread(file.path(dir, "OGEE_essentiality.txt"))[,-1]
 OGEE_merged = data.tbl %>% 
@@ -35,9 +35,9 @@ write_tsv(OGEE_merged, file.path(dir, "NPC_OGEE.txt"))
 
 
 dir = "/proj/yunligrp/users/tianyou/gRNA/OGEE"
-data.tbl <- read_table(file.path(dir, "NPC_hg38_annotated_downstream.tsv"), 
-                       col_names = c("chr","start","end","grna","dhs","strand",
-                                     "gchr","gstart","gend","gene","score","gstrand","distance"))
+data.tbl <- fread(file.path(dir, "NPC_hg38_annotated_downstream.tsv"), 
+                  col.names = c("chr","start","end","grna","dhs","strand",
+                                "gchr","gstart","gend","gene","score","gstrand","distance"))
 
 OGEE = fread(file.path(dir, "OGEE_essentiality.txt"))[,-1]
 OGEE_merged = data.tbl %>% 
