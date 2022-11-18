@@ -27,8 +27,10 @@ for (i in 1:5){
   s1 = ceiling(length(dhs)/5) * (i-1) + 1
   s2 = min(ceiling(length(dhs)/5) * i, length(dhs))
   dhs_fold = dhs[sample[s1:s2]]
-  fold = dat_sel %>% filter(dhs %in% dhs_fold)
-  print(paste0("Fold ", i, " # of gRNA: ", dim(fold)[1]))
-  write_csv(fold, file.path(dir, "split", paste0("npc-pfdr0.05-pfdr0.2-binary-fold",i,".csv")))
+  test = dat_sel %>% filter(dhs %in% dhs_fold)
+  train = dat_sel %>% filter(!(dhs %in% dhs_fold))
+  print(paste0("Fold ", i, " # of gRNA: ", dim(test)[1]))
+  write_csv(train, file.path(dir, "split", paste0("npc-pfdr0.05-pfdr0.2-binary-fold",i,"-train.csv")))
+  write_csv(test, file.path(dir, "split", paste0("npc-pfdr0.05-pfdr0.2-binary-fold",i,"-test.csv")))
 }
 
