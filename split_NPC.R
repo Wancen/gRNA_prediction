@@ -21,7 +21,7 @@ write_csv(dat_sel, file.path(dir, "split", "npc-rawp0.05.csv"))
 ## randomly sample dhs to split train and test data
 ## Binary classfication
 set.seed(2050)
-dhs <-dat_sel$dhs %>% unique()
+dhs <-dat_sel$dhs %>% unique() %>% sort()
 sample = sample(1:length(dhs), length(dhs))
 for (i in 1:5){
   s1 = ceiling(length(dhs)/5) * (i-1) + 1
