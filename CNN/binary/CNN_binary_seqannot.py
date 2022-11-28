@@ -15,17 +15,18 @@ from sklearn.metrics import f1_score, roc_auc_score
 import shap
 
 
-#parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser = argparse.ArgumentParser(description='gRNA prediction model')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
 #                    help='input batch size for training (default: 128)')
-#parser.add_argument('--epochs', type=int, default=100,
-#                    help='number of epochs to train (default: 100)')
+# parser.add_argument('--epochs', type=int, default=60,
+#                     help='number of epochs to train (default: 100)')
 #parser.add_argument('--lr', type=float, default=0.001,
 #                    help='learning rate (default: 0.001)')
-#args = parser.parse_args()
-#
+parser.add_argument('--fold', type=int, default=1, help='which fold of data to use')
+parser.add_argument('--grp', default="pro", help='promoter or enhancer region')
+args = parser.parse_args()
 #savedir = args.savedir
 #ckptdir = args.ckptdir
 
@@ -35,14 +36,21 @@ import shap
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/binary/'
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_fivefold/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result/binary_fivefold/'
 batch_size = 256
-epochs = 15 ## 60 for promoter, 15 for enhancer
 lr = 0.0001
 ngpu=1
-grp = 'enh'
+fold = args.fold
+grp = args.grp
+if grp == "enh":
+    epochs = 15
+elif grp == "pro":
+    epochs = 60
+else:
+    print("Invalid group: " + grp)
 
+print("Group: "+grp+"; Fold: "+str(fold))
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
 
@@ -74,7 +82,7 @@ def preprocess_seq(data):
 
 
 
-dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-train-clean.csv', index_col = False)
+dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-'+str(fold)+'-train-clean.csv', index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 label = dat['significance'].to_numpy(dtype = np.float32)
@@ -87,7 +95,6 @@ elif grp == 'enh':
 else:
     print("Invalid group: " + grp)
 
-
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
 #Xloader = torch.utils.data.DataLoader(X, batch_size=batch_size, shuffle=True)
 X2 = torch.tensor(annotation, dtype=torch.float32)
@@ -99,7 +106,7 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-test-clean.csv', index_col = False)
+test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-'+str(fold)+'-test-clean.csv', index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_label = test['significance'].to_numpy(dtype = np.float32)
@@ -116,9 +123,9 @@ test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float3
 test_X2_sub = torch.tensor(test_annotation[subsample,:], dtype=torch.float32).to(device)
 
 if grp == 'pro':
-    dim_fc = 162
+    dim_fc = 142
 elif grp == 'enh':
-    dim_fc = 164
+    dim_fc = 144
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
@@ -157,20 +164,20 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(260*10, 100),
+            nn.Linear(260*10, 80),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(dim_fc, 100),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(100, 80),
+            nn.Linear(dim_fc, 80),
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(80, 60),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(60, 1),
+            nn.Linear(60, 40),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(40, 1),
             # nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
@@ -229,7 +236,7 @@ def train_model(model, num_epochs):
 
 CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seqannot-Oct04.pth'
+ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seq-allannot-fold'+str(fold)+'-Nov28.pth'
 torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub, test_X2_sub
@@ -239,48 +246,7 @@ CNN.eval()
 test_predict = sigmoid(CNN(test_X1, test_X2))
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
-PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seqannot.csv')
+PD = pd.DataFrame(np.stack((test['protospacer'], test_label, test_predict_np[:,0]), axis=1), columns = ['grna', 'true', 'predict'])
+PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seq-allannot-fold'+str(fold)+'-Nov28.csv')
 
 
-
-
-
-## evaluate on the other test set: promoter on enhancer
-test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-test-clean.csv', index_col = False)
-test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-train-clean.csv', index_col = False)
-test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
-test_oth_sequence = test_oth['protospacer']
-test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
-test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
-#test_log2FC = np.abs(test_log2FC)
-test_oth_annotation = test_oth.iloc[:,np.r_[13:42,46,47,42,43]].to_numpy(dtype = np.float32) #for promoters, make the enhancer test file the same format
-test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
-test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
-CNN.eval()
-test_oth_predict = CNN(test_oth_X1, test_oth_X2)
-test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
-roc_auc_score(test_oth_label, test_oth_predict_np)
-PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD_oth.to_csv("./result_deltaGB/gRNA_binary-pro-on-enh-BCE.csv")
-
-
-## evaluate on the other test set: enhancer on promoter
-test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-test-clean.csv', index_col = False)
-test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-train-clean.csv', index_col = False)
-test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
-test_oth['promnumber']=np.mean(test['promnumber'])
-test_oth['promlog10fdr']=np.mean(test['promlog10fdr'])
-test_oth_sequence = test_oth['protospacer']
-test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
-test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
-#test_log2FC = np.abs(test_log2FC)
-test_oth_annotation = test_oth.iloc[:,np.r_[13:42,44,45,47,48,42,43]].to_numpy(dtype = np.float32) #for enhancers, make the promoter test file the same format
-test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
-test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
-CNN.eval()
-test_oth_predict = CNN(test_oth_X1, test_oth_X2)
-test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
-roc_auc_score(test_oth_label, test_oth_predict_np)
-PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD_oth.to_csv("./result_deltaGB/gRNA_binary-enh-on-pro-BCE.csv")
