@@ -15,17 +15,18 @@ from sklearn.metrics import f1_score, roc_auc_score
 import shap
 
 
-#parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser = argparse.ArgumentParser(description='gRNA prediction model')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
 #                    help='input batch size for training (default: 128)')
-#parser.add_argument('--epochs', type=int, default=100,
-#                    help='number of epochs to train (default: 100)')
+# parser.add_argument('--epochs', type=int, default=60,
+#                     help='number of epochs to train (default: 100)')
 #parser.add_argument('--lr', type=float, default=0.001,
 #                    help='learning rate (default: 0.001)')
-#args = parser.parse_args()
-#
+parser.add_argument('--fold', type=int, default=1, help='which fold of data to use')
+parser.add_argument('--grp', default="pro", help='promoter or enhancer region')
+args = parser.parse_args()
 #savedir = args.savedir
 #ckptdir = args.ckptdir
 
@@ -35,14 +36,21 @@ import shap
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/binary/'
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_fivefold/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result/binary_fivefold/'
 batch_size = 256
-epochs = 30 ## 30 for promoter, 15 for enhancer
 lr = 0.0001
 ngpu=1
-grp = 'pro'
+fold = args.fold
+grp = args.grp
+if grp == "enh":
+    epochs = 15
+elif grp == "pro":
+    epochs = 30
+else:
+    print("Invalid group: " + grp)
 
+print("Group: "+grp+"; Fold: "+str(fold))
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
 
@@ -74,7 +82,7 @@ def preprocess_seq(data):
 
 
 
-dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-train-clean.csv', index_col = False)
+dat = pd.read_csv(datadir+'wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-'+str(fold)+'-train-clean.csv', index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 label = dat['significance'].to_numpy(dtype = np.float32)
@@ -92,7 +100,7 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-test-clean.csv', index_col = False)
+test = pd.read_csv(datadir+'/wgCERES-gRNAs-k562-discovery-screen-'+grp+'_baseMean125-binary-'+str(fold)+'-test-clean.csv', index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_label = test['significance'].to_numpy(dtype = np.float32)
@@ -105,6 +113,12 @@ test_X1_sub = torch.tensor(test_sequence_onehot[subsample,:], dtype=torch.float3
 class DeepSeqCNN(nn.Module):
     def __init__(self):
         super(DeepSeqCNN, self).__init__()
+        # self.conv0 = nn.Sequential(
+        #     nn.Conv1d(4, 50, 1),
+        #     nn.MaxPool1d(2),
+        #     nn.ReLU(),
+        #     nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
+        # )
         self.conv0 = nn.Sequential(
             nn.Conv1d(4, 50, 2, stride=2),
             nn.ReLU(),
@@ -133,21 +147,21 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(260*10, 100),
+            nn.Linear(260*10, 80),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(120, 100),
-            nn.ReLU(),
-            nn.Dropout(0.4),
             nn.Linear(100, 80),
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(80, 60),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(60, 1),
-            #nn.Sigmoid()
+            nn.Linear(60, 40),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(40, 1),
+            # nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
     def forward(self, x):
@@ -205,7 +219,7 @@ def train_model(model, num_epochs):
 
 CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seq-Oct04.pth'
+ckptPATH = resultdir + '/models/gRNA_binary-'+grp+'-BCE-seq-fold'+str(fold)+'-Nov28.pth'
 torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub
@@ -214,6 +228,7 @@ CNN.eval()
 test_predict = sigmoid(CNN(test_X1))
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
-PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seq.csv')
+PD = pd.DataFrame(np.stack((test['protospacer'], test_label, test_predict_np[:,0]), axis=1), columns = ['grna', 'true', 'predict'])
+PD.to_csv(resultdir + '/gRNA_binary-'+grp+'-BCE-seq-fold'+str(fold)+'-Nov28.csv')
+
 
