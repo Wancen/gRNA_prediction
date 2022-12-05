@@ -16,6 +16,7 @@ import shap
 
 
 parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser.add_argument('--date', help='date used in output name to versonize the results')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
@@ -39,16 +40,12 @@ args = parser.parse_args()
 
 celltype = args.celltype
 datadir = '/proj/yunligrp/users/tianyou/gRNA/data/mhc/'
-resultdir = os.path.join('/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/mhc/', celltype, 'binary/')
+resultdir = os.path.join('/proj/yunligrp/users/tianyou/gRNA/result/mhc/', celltype)
 batch_size = 512
 epochs = 100
 lr = 0.00005
 ngpu=1
 fold = args.fold
-if celltype == "k562":
-    annotation_cols = np.r_[28:33,34,38:44]
-else:
-    annotation_cols = np.r_[30:35,36,40:46]
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -95,8 +92,9 @@ dat['GCprop'] = dat['GCcount'] / sequence_onehot.shape[2]
 label = dat['significant'].to_numpy(dtype = np.float32)
 class_count = dat['significant'].value_counts()
 w = class_count[0] / class_count[1]
-annotation = dat.iloc[:,annotation_cols].to_numpy(dtype = np.float32)
-
+feas_sel = ["deltagb", "deltagh", "GCcount", "GCprop", "Acount", "Ccount", "Tcount", "Gcount", "OGEE_prop_Essential", "H3k27ac_CPM_1Kb_new", 
+            "ATAC_CPM_1Kb_new", "H3K4me3_CPM_1Kb_new"]
+annotation = dat.loc[:,feas_sel].to_numpy(dtype = np.float32)
 
 
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
@@ -122,11 +120,8 @@ def get_test_data(cell):
     test['GCcount'] = test_sequence_sum[:,1] + test_sequence_sum[:,2]
     test['GCprop'] = test['GCcount'] / test_sequence_onehot.shape[2]
     test_label = test['significant'].to_numpy(dtype = np.float32)
-    if cell == "k562":
-        test_annotation = test.iloc[:,np.r_[28:33,34,38:44]].to_numpy(dtype = np.float32)
-    else:
-        test_annotation = test.iloc[:,np.r_[30:35,36,40:46]].to_numpy(dtype = np.float32)
-    
+    test_annotation = test.loc[:,feas_sel].to_numpy(dtype = np.float32)
+
     test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
     test_X2 = torch.tensor(test_annotation, dtype=torch.float32).to(device)
     return [test_X1, test_X2, test_label, test['grna']]
@@ -136,7 +131,7 @@ npc_X1, npc_X2, npc_label, npc_grna = get_test_data("npc")
 ipsc_X1, ipsc_X2, ipsc_label, ipsc_grna = get_test_data("ipsc")
 testc_X1, testc_X2, testc_label, testc_grna = get_test_data(celltype)
 
-dim_fc = 92
+dim_fc = 112
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
@@ -169,7 +164,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(260*10, 60),
+            nn.Linear(260*10, 80),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
@@ -241,7 +236,7 @@ def train_model(model, num_epochs):
 
 CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = os.path.join(resultdir,'models',celltype+'-binary-BCE-seqannot-Nov28-fold'+str(fold)+'.pth')
+ckptPATH = os.path.join(resultdir,'models',celltype+'-binary-BCE-seqannot-'+args.date+'-fold'+str(fold)+'.pth')
 torch.save(CNN.state_dict(), ckptPATH)
 
 del testc_X1, testc_X2, testc_label, testc_grna
