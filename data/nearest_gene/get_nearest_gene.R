@@ -8,9 +8,9 @@ library(data.table)
 # EnsDbv105 = EnsDbv105[["AH98047"]]
 # tx <- transcripts(EnsDbv105, columns=c('tx_id', 'tx_id_version', 'tx_biotype', 'gene_id', 'gene_name', 'gene_seq_start', 'gene_seq_end'))
 # tx = tx %>% as_tibble() %>% dplyr::filter(tx_biotype == "protein_coding")
-# tx = tx %>% 
-#   dplyr::select(seqnames, start, end, gene_id, gene_name, strand) %>% 
-#   dplyr::filter(seqnames %in% as.character(seq(1,22))) %>%
+# tx = tx %>%
+#   dplyr::select(seqnames, start, end, gene_id, gene_name, strand) %>%
+#   dplyr::filter(seqnames %in% c(as.character(seq(1,22)),"X")) %>%
 #   mutate(seqnames = str_c("chr", seqnames)) %>%
 #   write_tsv("/proj/yunligrp/users/tianyou/gRNA/OGEE/Ensemble105.bed", col_names = FALSE)
 
