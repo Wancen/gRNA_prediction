@@ -16,7 +16,8 @@ import shap
 from scipy.stats import spearmanr
 
 
-#parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser.add_argument('--date', help='date in the output name to versonize results')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
@@ -25,7 +26,8 @@ from scipy.stats import spearmanr
 #                    help='number of epochs to train (default: 100)')
 #parser.add_argument('--lr', type=float, default=0.001,
 #                    help='learning rate (default: 0.001)')
-#args = parser.parse_args()
+parser.add_argument('--fold', type=int, default=1, help='which fold of data to use')
+args = parser.parse_args()
 #
 #savedir = args.savedir
 #ckptdir = args.ckptdir
@@ -36,13 +38,13 @@ from scipy.stats import spearmanr
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/data_April_resplit/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/WT_count/'
-batch_size = 256
-epochs = 1000  ## 250 for matched, 100 for full
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/WT_fivefold/'
+resultdir = '/proj/yunligrp/users/tianyou/gRNA/result/WT_count/'
+batch_size = 512
+epochs = 2000
 lr = 0.0001
 ngpu=1
-full = True
+fold = args.fold
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
@@ -72,11 +74,7 @@ def preprocess_seq(data):
     return DATA_X
 
 
-if full:
-    dat = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-binary-train.csv', index_col = False)
-else:
-    dat = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-binary-train-clean.csv', index_col = False)
-
+dat = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-train-fold'+str(fold)+'.csv', index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
 WTcount = dat['avgWTcount_K562'].to_numpy(dtype = np.float32)
@@ -94,11 +92,7 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-if full:
-    test = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-binary-test.csv', index_col = False)
-else:
-    test = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-binary-test-clean.csv', index_col = False)
-
+test = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-test-fold'+str(fold)+'.csv', index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
 test_WTcount = test['avgWTcount_K562'].to_numpy(dtype = np.float32)
@@ -107,7 +101,7 @@ test_WTcount = test['avgWTcount_K562'].to_numpy(dtype = np.float32)
 
 test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 
-dim_fc = 120
+dim_fc = 100
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
@@ -146,20 +140,20 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(260*10, 100),
+            nn.Linear(260*10, 80),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
-            nn.Linear(dim_fc, 100),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(100, 80),
+            nn.Linear(dim_fc, 80),
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(80, 60),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(60, 1),
+            nn.Linear(60, 40),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(40, 1),
             #nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
@@ -217,14 +211,7 @@ def train_model(model, num_epochs):
 
 
 CNN = train_model(CNN, num_epochs=epochs)
-
-if full:
-    #ckptPATH = resultdir + '/models/Maria_WT_cont_full-MSE-seq-Oct05.pth'
-    ckptPATH = resultdir + '/models/Maria_plasmid_full-MSE-seq-Oct05.pth'
-else:
-    #ckptPATH = resultdir + '/models/Maria_WT_cont-BCE-seq-Oct04.pth'
-    ckptPATH = resultdir + '/models/Maria_plasmid-BCE-seq-Oct04.pth'
-
+ckptPATH = resultdir + '/models/Maria_plasmid_full-MSE-seq-fold'+str(fold)+'-'+args.date+'.pth'
 torch.save(CNN.state_dict(), ckptPATH)
 
 del test_X1_sub
@@ -233,11 +220,7 @@ CNN.eval()
 test_predict = CNN(test_X1)
 test_predict_np = test_predict.detach().to('cpu').numpy()
 spearmanr(test_WTcount, test_predict_np)
-PD = pd.DataFrame(np.stack((test_WTcount, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-if full:
-    #PD.to_csv(resultdir + '/Maria_WT_cont_full-MSE-seq.csv')
-    PD.to_csv(resultdir + '/Maria_plasmid_full-MSE-seq.csv')
-else:
-    #PD.to_csv(resultdir + '/Maria_WT_cont-MSE-seq.csv')
-    PD.to_csv(resultdir + '/Maria_plasmid-MSE-seq.csv')
+PD = pd.DataFrame(np.stack((test['protospacer'],test_WTcount, test_predict_np[:,0]), axis=1), columns = ['grna','true', 'predict'])
+PD.to_csv(resultdir + '/Maria_plasmid_full-MSE-seq-fold'+str(fold)+'-'+args.date+'.csv')
+
 
