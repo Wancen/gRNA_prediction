@@ -1,6 +1,6 @@
 # Obtaining the information of nearest gene
 
-We downloaded All gencode v41 gene annotation information from UCSC Table Browser.
+We obtain the Ensemble 105 dataframe from AnnotationHub (see get_nearest_gene.R).
 
 First sort the reference file and coordinate files:
 dir="/proj/yunligrp/users/tianyou/gRNA/OGEE/"
