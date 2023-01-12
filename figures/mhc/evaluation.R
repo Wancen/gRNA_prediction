@@ -3,7 +3,8 @@ library(data.table)
 
 result_dir = "/proj/yunligrp/users/tianyou/gRNA/result/mhc"
 xgboost_dir = "/proj/milovelab/mu/dukeproj/data/mhc/"
-model_list = c("K562", "NPC", "iPSC")
+scdir = "/proj/yunligrp/users/tianyou/gRNA/result/single-cell/cross_apply/"
+model_list = c("K562", "NPC", "iPSC", "sc")
 CNN = list()
 xgboost = list()
 for (model in model_list){
@@ -11,9 +12,15 @@ for (model in model_list){
   xgboost_mat = matrix(NA, nrow = 5, ncol = 3)
   for (fold in 1:5){
     for (test_cell in 1:3){
-      CNN_result = fread(file.path(result_dir, tolower(model),
-                                   paste0(tolower(model), "-binary-BCE-seqannot-fold", fold, 
-                                          "-test-", tolower(model_list[test_cell]), ".csv")))
+      if (model == "sc"){
+        CNN_result = fread(file.path(scdir,paste0("sc-binary-BCE-seqannot-fold", fold, 
+                                                  "-test-", tolower(model_list[test_cell]), ".csv")))
+      } else{
+        CNN_result = fread(file.path(result_dir, tolower(model),
+                                     paste0(tolower(model), "-binary-BCE-seqannot-fold", fold, 
+                                            "-test-", tolower(model_list[test_cell]), ".csv")))
+      }
+      
       if (model != model_list[test_cell]){
         xgboost_result = fread(file.path(xgboost_dir, tolower(model_list[test_cell]),"result",
                                          paste0(tolower(model_list[test_cell]),"-by-",tolower(model),
@@ -34,10 +41,10 @@ for (model in model_list){
     }
   }
   CNN_mat = as.data.table(CNN_mat)
-  colnames(CNN_mat) = model_list
+  colnames(CNN_mat) = model_list[1:3]
   CNN[[model]] = CNN_mat
   xgboost_mat = as.data.table(xgboost_mat)
-  colnames(xgboost_mat) = model_list
+  colnames(xgboost_mat) = model_list[1:3]
   xgboost[[model]] = xgboost_mat
 }
 CNN_combined = bind_rows(CNN, .id = "training_model")
