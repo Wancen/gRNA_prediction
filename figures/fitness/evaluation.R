@@ -2,10 +2,10 @@ library(tidyverse)
 library(data.table)
 
 CNN_dir = "/proj/yunligrp/users/tianyou/gRNA/result/binary_fivefold"
-xgboost_dir = "/proj/milovelab/mu/dukeproj/data/dat_fivefold/result"
+xgboost_dir = "/proj/milovelab/mu/dukeproj/data/dat_discovery/result"
 CNN_list = c("seq", "seq-topannot", "seq-allannot", "annot")
-xgboost_list = c("-seq","-top-seqanno","","-anno")
 savedir = "/proj/yunligrp/users/tianyou/gRNA/result/binary_fivefold/comparison"
+xgboost_list = c("-seq","-top-seqanno","","-anno")
 CNN_enh_result_mat = matrix(NA, nrow = 5, ncol = length(CNN_list))
 XGB_enh_result_mat = matrix(NA, nrow = 5, ncol = length(CNN_list))
 
@@ -39,6 +39,7 @@ write_csv(combined_enh, file.path(savedir, "enh_auc_combined_summary.csv"))
 
 
 ##### For promoters ####
+xgboost_list = c("-seq","-top-seqanno2","","-anno")
 CNN_pro_result_mat = matrix(NA, nrow = 5, ncol = length(CNN_list))
 XGB_pro_result_mat = matrix(NA, nrow = 5, ncol = length(CNN_list))
 
