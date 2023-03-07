@@ -15,7 +15,8 @@ from sklearn.metrics import f1_score, roc_auc_score
 import shap
 
 
-#parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser = argparse.ArgumentParser(description='gRNA prediction model')
+parser.add_argument('--date', help='date used in output name to versonize the results')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
@@ -24,7 +25,8 @@ import shap
 #                    help='number of epochs to train (default: 100)')
 #parser.add_argument('--lr', type=float, default=0.001,
 #                    help='learning rate (default: 0.001)')
-#args = parser.parse_args()
+parser.add_argument('--fold', type=int, default=1, help='which fold of data to use')
+args = parser.parse_args()
 #
 #savedir = args.savedir
 #ckptdir = args.ckptdir
@@ -35,17 +37,18 @@ import shap
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/mhc/ipsc/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result_April_resplit/mhc/ipsc/binary/'
-batch_size = 256
-epochs = 1000 ## 60 for promoter, 15 for enhancer
-lr = 0.0001
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/single-cell/'
+resultdir = os.path.join('/proj/yunligrp/users/tianyou/gRNA/result/single-cell/')
+batch_size = 512
+epochs = 400
+lr = 0.00005
 ngpu=1
-#grp = 'enh'
+fold = args.fold
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
 
+#torch.manual_seed(762)
 
 def preprocess_seq(data):
     print("Start preprocessing the sequence")
@@ -74,13 +77,23 @@ def preprocess_seq(data):
 
 
 
-dat = pd.read_csv(datadir+'ipsc-pfdr0.05-pfdr0.2-binary-train.csv', index_col = False)
-sequence = dat['grna']
+dat = pd.read_csv(os.path.join(datadir, 'sc_fdr_filtered-binary-'+str(fold)+'-train.csv'), index_col = False)
+sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
-label = dat['significant'].to_numpy(dtype = np.float32)
-class_count = dat['significant'].value_counts()
+sequence_sum = sequence_onehot.sum(axis=2)
+dat['Acount'] = sequence_sum[:,0]
+dat['Ccount'] = sequence_sum[:,1]
+dat['Gcount'] = sequence_sum[:,2]
+dat['Tcount'] = sequence_sum[:,3]
+dat['GCcount'] = sequence_sum[:,1] + sequence_sum[:,2]
+dat['GCprop'] = dat['GCcount'] / sequence_onehot.shape[2]
+label = dat['significance'].to_numpy(dtype = np.float32)
+class_count = dat['significance'].value_counts()
 w = class_count[0] / class_count[1]
-annotation = dat.iloc[:,np.r_[23,27:35]].to_numpy(dtype = np.float32)
+'''Top features that we keep: deltagb, deltagh, H3K27ac, ATAC, H3K4me3, OGEE_prop_Essential'''
+feas_sel = ["deltagb", "deltagh", "GCcount", "GCprop", "Acount", "Ccount", "Tcount", "Gcount", "OGEE_prop_Essential", "H3k27ac_CPM_1Kb_new", 
+            "ATAC_CPM_1Kb_new", "H3K4me3_CPM_1Kb_new"]
+annotation = dat.loc[:,feas_sel].to_numpy(dtype = np.float32)
 
 
 
@@ -95,16 +108,23 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv(datadir+'ipsc-pfdr0.05-pfdr0.2-binary-test.csv', index_col = False)
-test_sequence = test['grna']
+test = pd.read_csv(os.path.join(datadir, 'sc_fdr_filtered-binary-'+str(fold)+'-test.csv'), index_col = False)
+test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
-test_label = test['significant'].to_numpy(dtype = np.float32)
-test_annotation = test.iloc[:,np.r_[23,27:35]].to_numpy(dtype = np.float32)
+test_sequence_sum = test_sequence_onehot.sum(axis=2)
+test['Acount'] = test_sequence_sum[:,0]
+test['Ccount'] = test_sequence_sum[:,1]
+test['Gcount'] = test_sequence_sum[:,2]
+test['Tcount'] = test_sequence_sum[:,3]
+test['GCcount'] = test_sequence_sum[:,1] + test_sequence_sum[:,2]
+test['GCprop'] = test['GCcount'] / test_sequence_onehot.shape[2]
+test_label = test['significance'].to_numpy(dtype = np.float32)
+test_annotation = test.loc[:,feas_sel].to_numpy(dtype = np.float32)
 
-test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
-test_X2_sub = torch.tensor(test_annotation, dtype=torch.float32).to(device)
+test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
+test_X2 = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 
-dim_fc = 89
+dim_fc = 112
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
@@ -137,7 +157,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Sequential(
-            nn.Linear(260*10, 60),
+            nn.Linear(260*10, 80),
             nn.ReLU(),
             nn.Dropout(0.3))
         self.fc2 = nn.Sequential(
@@ -183,7 +203,7 @@ def train_model(model, num_epochs):
         # Training
         if epoch % 2 == 0:
             model.eval()
-            test_predict = sigmoid(model(test_X1_sub, test_X2_sub))
+            test_predict = sigmoid(model(test_X1, test_X2))
             test_predict_np = test_predict.detach().to('cpu').numpy()
             auc = roc_auc_score(test_label, test_predict_np)
             print('Epoch [%d] AUC: %.3f' %
@@ -200,67 +220,23 @@ def train_model(model, num_epochs):
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            if i % 200 == 199:    # print every 200 mini-batches
+            if i % 20 == 19:    # print every 200 mini-batches
                 print('[%d, %5d] loss: %.3f' %
-                    (epoch + 1, i + 1, running_loss / 200))
+                    (epoch + 1, i + 1, running_loss / 20))
                 running_loss = 0.0
     
     return model
 
 CNN = train_model(CNN, num_epochs=epochs)
 
-ckptPATH = resultdir + '/models/iPSC-binary-BCE-seqannot-Oct04.pth'
+ckptPATH = os.path.join(resultdir,'models','sc-binary-BCE-seqannot-fold'+str(fold)+'-'+args.date+'.pth')
 torch.save(CNN.state_dict(), ckptPATH)
 
-del test_X1_sub, test_X2_sub
-test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
-test_X2 = torch.tensor(test_annotation, dtype=torch.float32).to(device)
 CNN.eval()
+
 test_predict = sigmoid(CNN(test_X1, test_X2))
 test_predict_np = test_predict.detach().to('cpu').numpy()
 roc_auc_score(test_label, test_predict_np)
-PD = pd.DataFrame(np.stack((test_label, test_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD.to_csv(resultdir + '/iPSC-binary-BCE-seqannot.csv')
+test_PD = pd.DataFrame(np.stack((test['protospacer'], test_label, test_predict_np[:,0]), axis=1), columns = ['grna', 'true', 'predict'])
+test_PD.to_csv(os.path.join(resultdir,'sc-binary-BCE-seqannot-fold'+str(fold)+'-'+args.date+'.csv'))
 
-
-
-
-
-## evaluate on the other test set: promoter on enhancer
-test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-test-clean.csv', index_col = False)
-test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-enh_rawp0.05-binary-train-clean.csv', index_col = False)
-test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
-test_oth_sequence = test_oth['protospacer']
-test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
-test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
-#test_log2FC = np.abs(test_log2FC)
-test_oth_annotation = test_oth.iloc[:,np.r_[13:42,46,47,42,43]].to_numpy(dtype = np.float32) #for promoters, make the enhancer test file the same format
-test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
-test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
-CNN.eval()
-test_oth_predict = CNN(test_oth_X1, test_oth_X2)
-test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
-roc_auc_score(test_oth_label, test_oth_predict_np)
-PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD_oth.to_csv("./result_deltaGB/gRNA_binary-pro-on-enh-BCE.csv")
-
-
-## evaluate on the other test set: enhancer on promoter
-test_oth1 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-test-clean.csv', index_col = False)
-test_oth2 = pd.read_csv('/pine/scr/t/i/tianyou/Patrick/data/wgCERES-gRNAs-k562-discovery-screen-pro_rawp0.05-binary-train-clean.csv', index_col = False)
-test_oth = pd.concat([test_oth1,test_oth2], ignore_index=True)
-test_oth['promnumber']=np.mean(test['promnumber'])
-test_oth['promlog10fdr']=np.mean(test['promlog10fdr'])
-test_oth_sequence = test_oth['protospacer']
-test_oth_sequence_onehot = preprocess_seq(test_oth_sequence)
-test_oth_label = test_oth['significant'].to_numpy(dtype = np.float32)
-#test_log2FC = np.abs(test_log2FC)
-test_oth_annotation = test_oth.iloc[:,np.r_[13:42,44,45,47,48,42,43]].to_numpy(dtype = np.float32) #for enhancers, make the promoter test file the same format
-test_oth_X1 = torch.tensor(test_oth_sequence_onehot, dtype=torch.float32).to(device)
-test_oth_X2 = torch.tensor(test_oth_annotation, dtype=torch.float32).to(device)
-CNN.eval()
-test_oth_predict = CNN(test_oth_X1, test_oth_X2)
-test_oth_predict_np = test_oth_predict.detach().to('cpu').numpy()
-roc_auc_score(test_oth_label, test_oth_predict_np)
-PD_oth = pd.DataFrame(np.stack((test_oth_label, test_oth_predict_np[:,0]), axis=1), columns = ['true', 'predict'])
-PD_oth.to_csv("./result_deltaGB/gRNA_binary-enh-on-pro-BCE.csv")

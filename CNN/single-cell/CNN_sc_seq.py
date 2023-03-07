@@ -13,11 +13,10 @@ from torch.utils.data import TensorDataset, DataLoader
 import pandas as pd
 from sklearn.metrics import f1_score, roc_auc_score
 import shap
-from scipy.stats import spearmanr
 
 
 parser = argparse.ArgumentParser(description='gRNA prediction model')
-parser.add_argument('--date', help='date in the output name to versonize results')
+parser.add_argument('--date', help='date used in output name to versonize the results')
 #parser.add_argument('--savedir', default='./', help='path to save results')
 #parser.add_argument('--ckptdir', default='./ckpt', help='path to save checkpoints')
 #parser.add_argument('--batch-size', type=int, default=128,
@@ -38,17 +37,18 @@ args = parser.parse_args()
 #lr = args.lr
 #ngpu=1
 
-datadir = '/proj/yunligrp/users/tianyou/gRNA/data/WT_fivefold/'
-resultdir = '/proj/yunligrp/users/tianyou/gRNA/result/WT_count/'
+datadir = '/proj/yunligrp/users/tianyou/gRNA/data/single-cell/'
+resultdir = os.path.join('/proj/yunligrp/users/tianyou/gRNA/result/single-cell/')
 batch_size = 512
-epochs = 2000
-lr = 0.0001
+epochs = 500
+lr = 0.000025
 ngpu=1
 fold = args.fold
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 print(device)
 
+#torch.manual_seed(762)
 
 def preprocess_seq(data):
     print("Start preprocessing the sequence")
@@ -56,6 +56,8 @@ def preprocess_seq(data):
     DATA_X = np.zeros((len(data),4,length), dtype=int)
     print(DATA_X.shape)
     for l in range(len(data)):
+        if l % 10000 == 0:
+            print(str(l) + " sequences processed")
         for i in range(length):
             try: data[l][i]
             except: print(data[l], i, length, len(data))
@@ -74,17 +76,25 @@ def preprocess_seq(data):
     return DATA_X
 
 
-dat = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-train-fold'+str(fold)+'.csv', index_col = False)
+
+dat = pd.read_csv(os.path.join(datadir, 'sc_fdr_filtered-binary-'+str(fold)+'-train.csv'), index_col = False)
 sequence = dat['protospacer']
 sequence_onehot = preprocess_seq(sequence)
-WTcount = dat['avgWTcount_K562'].to_numpy(dtype = np.float32)
-#WTcount = dat['plasmidpool_readcount'].to_numpy(dtype = np.float32)
-
+sequence_sum = sequence_onehot.sum(axis=2)
+dat['Acount'] = sequence_sum[:,0]
+dat['Ccount'] = sequence_sum[:,1]
+dat['Gcount'] = sequence_sum[:,2]
+dat['Tcount'] = sequence_sum[:,3]
+dat['GCcount'] = sequence_sum[:,1] + sequence_sum[:,2]
+dat['GCprop'] = dat['GCcount'] / sequence_onehot.shape[2]
+label = dat['significance'].to_numpy(dtype = np.float32)
+class_count = dat['significance'].value_counts()
+w = class_count[0] / class_count[1]
 
 
 X1 = torch.tensor(sequence_onehot, dtype=torch.float32)
 #Xloader = torch.utils.data.DataLoader(X, batch_size=batch_size, shuffle=True)
-Y = torch.tensor(WTcount, dtype=torch.float32)
+Y = torch.tensor(label, dtype=torch.float32)
 Y = Y.view(-1, 1)
 #Yloader = torch.utils.data.DataLoader(Y, batch_size=batch_size, shuffle=True)
 input_dat = TensorDataset(X1,Y)
@@ -92,26 +102,25 @@ datloader = DataLoader(input_dat, batch_size=batch_size, shuffle=True)
 
 
 ## test set
-test = pd.read_csv(datadir+'Maria-gRNAs-k562-validation-screen-full-test-fold'+str(fold)+'.csv', index_col = False)
+test = pd.read_csv(os.path.join(datadir, 'sc_fdr_filtered-binary-'+str(fold)+'-test.csv'), index_col = False)
 test_sequence = test['protospacer']
 test_sequence_onehot = preprocess_seq(test_sequence)
-test_WTcount = test['avgWTcount_K562'].to_numpy(dtype = np.float32)
-#test_WTcount = test['plasmidpool_readcount'].to_numpy(dtype = np.float32)
+test_sequence_sum = test_sequence_onehot.sum(axis=2)
+test['Acount'] = test_sequence_sum[:,0]
+test['Ccount'] = test_sequence_sum[:,1]
+test['Gcount'] = test_sequence_sum[:,2]
+test['Tcount'] = test_sequence_sum[:,3]
+test['GCcount'] = test_sequence_sum[:,1] + test_sequence_sum[:,2]
+test['GCprop'] = test['GCcount'] / test_sequence_onehot.shape[2]
+test_label = test['significance'].to_numpy(dtype = np.float32)
 
-
-test_X1_sub = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
+test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 
 dim_fc = 100
 
 class DeepSeqCNN(nn.Module):
     def __init__(self):
         super(DeepSeqCNN, self).__init__()
-        # self.conv0 = nn.Sequential(
-        #     nn.Conv1d(4, 50, 1),
-        #     nn.MaxPool1d(2),
-        #     nn.ReLU(),
-        #     nn.Dropout(0.4),   ## for ReLU, it is interchangeable with max pooling and dropout
-        # )
         self.conv0 = nn.Sequential(
             nn.Conv1d(4, 50, 2, stride=2),
             nn.ReLU(),
@@ -154,7 +163,7 @@ class DeepSeqCNN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.4),
             nn.Linear(40, 1),
-            #nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
+            # nn.Sigmoid()  ## BCEWithLogitsLoss takes in logits directly without sigmoid
         )
         
     def forward(self, x):
@@ -178,18 +187,19 @@ class DeepSeqCNN(nn.Module):
 CNN = DeepSeqCNN().to(device)
 optimizer = optim.Adam(CNN.parameters(), lr=lr)
 #lossfunc = nn.L1Loss().to(device)
-lossfunc = nn.MSELoss().to(device)
+lossfunc = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w])).to(device)
+sigmoid = nn.Sigmoid()
 
 def train_model(model, num_epochs):
     for epoch in range(num_epochs):
         # Training
-        if epoch % 5 == 0:
+        if epoch % 2 == 0:
             model.eval()
-            test_predict = model(test_X1_sub)
+            test_predict = sigmoid(model(test_X1))
             test_predict_np = test_predict.detach().to('cpu').numpy()
-            r2 = spearmanr(test_WTcount, test_predict_np)
-            print('Epoch [%d] spearman correlation: %.3f' %
-                    (epoch + 1, r2[0]))
+            auc = roc_auc_score(test_label, test_predict_np)
+            print('Epoch [%d] AUC: %.3f' %
+                    (epoch + 1, auc))
             model.train()
         running_loss = 0.0
         for i, batch in enumerate(datloader, 0):
@@ -202,25 +212,23 @@ def train_model(model, num_epochs):
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            if i % 20 == 19:    # print every 20 mini-batches
+            if i % 20 == 19:    # print every 200 mini-batches
                 print('[%d, %5d] loss: %.3f' %
                     (epoch + 1, i + 1, running_loss / 20))
                 running_loss = 0.0
     
     return model
 
-
 CNN = train_model(CNN, num_epochs=epochs)
-ckptPATH = resultdir + '/models/Maria_plasmid_full-MSE-seq-fold'+str(fold)+'-'+args.date+'.pth'
+
+ckptPATH = os.path.join(resultdir,'models','sc-binary-BCE-seq-fold'+str(fold)+'-'+args.date+'.pth')
 torch.save(CNN.state_dict(), ckptPATH)
 
-del test_X1_sub
-test_X1 = torch.tensor(test_sequence_onehot, dtype=torch.float32).to(device)
 CNN.eval()
-test_predict = CNN(test_X1)
-test_predict_np = test_predict.detach().to('cpu').numpy()
-spearmanr(test_WTcount, test_predict_np)
-PD = pd.DataFrame(np.stack((test['protospacer'],test_WTcount, test_predict_np[:,0]), axis=1), columns = ['grna','true', 'predict'])
-PD.to_csv(resultdir + '/Maria_plasmid_full-MSE-seq-fold'+str(fold)+'-'+args.date+'.csv')
 
+test_predict = sigmoid(CNN(test_X1))
+test_predict_np = test_predict.detach().to('cpu').numpy()
+roc_auc_score(test_label, test_predict_np)
+test_PD = pd.DataFrame(np.stack((test['protospacer'], test_label, test_predict_np[:,0]), axis=1), columns = ['grna', 'true', 'predict'])
+test_PD.to_csv(os.path.join(resultdir,'sc-binary-BCE-seq-fold'+str(fold)+'-'+args.date+'.csv'))
 
